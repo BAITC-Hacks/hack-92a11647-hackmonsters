@@ -8,3 +8,13 @@ dist/
 npm-debug.log*
 pnpm-debug.log*
 .codex_docx_qa_*/
+.venv/
+.uv-cache/
+.tmp/
+__pycache__/
+*.py[cod]
+.env
+__pycache__/
+.pytest_cache/
+.env
+*.egg-info/
