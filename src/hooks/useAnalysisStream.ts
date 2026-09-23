@@ -1,106 +1,42 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { streamScenarioAnalysis } from '../services/analysisStream';
-import type {
-  AnalysisProvider,
-  DistrictProjection,
-  Measure,
-  StreamStatus,
-} from '../types';
-
-interface StartOptions {
-  selectedMeasures: Measure[];
-  projections: DistrictProjection[];
-  spent: number;
-  provider: AnalysisProvider;
-  planKey: string;
-}
+import { analyzeScenario, assessmentMarkdown } from '../services/analysisStream';
+import type { AnalysisProvider, SimulationRequest, StreamStatus } from '../types';
 
 export function useAnalysisStream() {
   const [markdown, setMarkdown] = useState('');
   const [status, setStatus] = useState<StreamStatus>('idle');
   const [error, setError] = useState('');
+  const [providerUsed, setProviderUsed] = useState('');
   const [analyzedPlanKey, setAnalyzedPlanKey] = useState('');
-  const abortRef = useRef<AbortController | null>(null);
-  const pendingRef = useRef('');
-  const frameRef = useRef<number | null>(null);
-
-  const flush = useCallback(() => {
-    if (pendingRef.current) {
-      const pending = pendingRef.current;
-      pendingRef.current = '';
-      setMarkdown((current) => current + pending);
-    }
-    frameRef.current = null;
-  }, []);
+  const controllerRef = useRef<AbortController | null>(null);
 
   const cancel = useCallback(() => {
-    abortRef.current?.abort();
-    flush();
-    setStatus((current) => (current === 'streaming' ? 'cancelled' : current));
-  }, [flush]);
+    controllerRef.current?.abort();
+    setStatus((current) => current === 'streaming' ? 'cancelled' : current);
+  }, []);
 
-  const start = useCallback(
-    async (options: StartOptions) => {
-      abortRef.current?.abort();
-      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
-      pendingRef.current = '';
-      const controller = new AbortController();
-      abortRef.current = controller;
-      setMarkdown('');
-      setError('');
-      setStatus('streaming');
-      setAnalyzedPlanKey(options.planKey);
+  const start = useCallback(async (plan: SimulationRequest, provider: AnalysisProvider, key: string) => {
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    setMarkdown('');
+    setError('');
+    setProviderUsed('');
+    setAnalyzedPlanKey(key);
+    setStatus('streaming');
+    try {
+      const response = await analyzeScenario(plan, provider, controller.signal);
+      if (controller.signal.aborted || controllerRef.current !== controller) return;
+      setMarkdown(assessmentMarkdown(response.assessment));
+      setProviderUsed(response.provider_used);
+      setStatus('complete');
+    } catch (caught) {
+      if (controller.signal.aborted || controllerRef.current !== controller) return;
+      setError(caught instanceof Error ? caught.message : 'Не удалось получить анализ.');
+      setStatus('error');
+    }
+  }, []);
 
-      try {
-        await streamScenarioAnalysis(
-          {
-            request: {
-              decisionIds: options.selectedMeasures.map((item) => item.id),
-              provider: options.provider,
-              locale: 'ru-KZ',
-              budgetLimit: 100,
-            },
-            selectedMeasures: options.selectedMeasures,
-            projections: options.projections,
-            spent: options.spent,
-          },
-          controller.signal,
-          (delta) => {
-            pendingRef.current += delta;
-            if (frameRef.current === null) {
-              frameRef.current = requestAnimationFrame(flush);
-            }
-          },
-        );
-        flush();
-        if (!controller.signal.aborted) setStatus('complete');
-      } catch (caught) {
-        flush();
-        if (caught instanceof DOMException && caught.name === 'AbortError') {
-          setStatus('cancelled');
-          return;
-        }
-        setError(caught instanceof Error ? caught.message : 'Не удалось получить анализ.');
-        setStatus('error');
-      }
-    },
-    [flush],
-  );
-
-  useEffect(
-    () => () => {
-      abortRef.current?.abort();
-      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
-    },
-    [],
-  );
-
-  return {
-    markdown,
-    status,
-    error,
-    analyzedPlanKey,
-    start,
-    cancel,
-  };
+  useEffect(() => () => controllerRef.current?.abort(), []);
+  return { markdown, status, error, providerUsed, analyzedPlanKey, start, cancel };
 }

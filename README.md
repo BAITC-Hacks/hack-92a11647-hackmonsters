@@ -1,338 +1,132 @@
 # Аким на 5 часов
 
-Рабочий React-прототип AI-симулятора управления Астаной. Команда выбирает ровно пять городских мер, удерживает единый виртуальный бюджет в пределах 100 у.е., сравнивает предварительный эффект для пяти районов и получает потоковый AI-разбор с коротким питчем для жюри.
+React-интерфейс → FastAPI → CitySimulator → OpenAI / NVIDIA.
+Все три части соединены: интерфейс загружает серверный каталог, отправляет ID
+мер и районы, показывает точный расчёт и отдельно запрашивает AI-пояснение.
 
-Проект сделан как frontend-first демо: по умолчанию аналитика и питч генерируются локальным mock-адаптером, поэтому основной сценарий воспроизводится без API-ключей и backend. Для интеграции достаточно включить API-режим и реализовать два описанных ниже endpoint.
+## Быстрый запуск в VS Code (PowerShell)
 
-## Важное уточнение требований
+Откройте именно папку репозитория, затем Terminal → New Terminal.
+Требуется Python 3.11+ (рекомендуется 3.12), Node.js 22.12+ и pnpm 11.
 
-Исходный DOCX подтверждает единый ограниченный бюджет, пять решений по пяти направлениям, автоматический запрет перерасхода, AI-анализ, Astana Quality of Life Score, объяснение сильных сторон, рисков и компромиссов, а также опциональную краткую презентацию.
+Первая установка:
 
-Три числовых параметра взяты из продуктового задания пользователя, а не из DOCX:
-
-- каталог из 14 мер;
-- лимит 100 у.е.;
-- пять районов.
-
-Число 100 на третьей странице DOCX относится к сумме баллов жюри, не к бюджету симулятора. В интерфейсе 100 у.е. зафиксированы именно как продуктовое правило текущего прототипа.
-
-## Что реализовано
-
-- Каталог из 14 мер с поиском, фильтрами, сортировкой, стоимостью, ожидаемыми эффектами и риском внедрения.
-- Пять слотов — по одному на каждое направление: транспорт, экология, соцсфера, безопасность, сервисы.
-- Безопасная замена меры внутри направления без промежуточного удаления.
-- Жёсткая проверка `spent <= 100`; недоступный выбор объясняет дефицит бюджета.
-- Budget meter с порогом внимания на 80% и точным остатком.
-- Предварительный расчёт `baseline → projected → delta` для пяти районов.
-- Recharts radar chart для выбранного района и HTML-матрица 5×5 для точного сравнения всех дельт.
-- Панель AI-аналитики с переключением OpenAI, NVIDIA NIM и consensus-режима.
-- Потоковый Markdown через `fetch POST + ReadableStream`, `AbortController`, отмену, повторный запуск и признак устаревшего результата.
-- Безопасный рендеринг Markdown через `react-markdown`, `remark-gfm` и `rehype-sanitize` без `rehype-raw`.
-- Кнопка «Сгенерировать питч» и адаптивная карусель из четырёх слайдов с клавиатурной навигацией, swipe, заметками спикера и печатью.
-- Desktop, tablet и mobile layouts, reduced-motion режим и основные ARIA-состояния.
-
-## Запуск
-
-Требуется Node.js `^20.19.0` или `>=22.12.0` и pnpm.
-
-```bash
-pnpm install
-pnpm dev
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+pnpm install --frozen-lockfile
 ```
 
-Production-проверка:
+Если `.venv` уже есть, создавать её заново не нужно. Вместо `py` можно использовать
+`uv venv --python 3.12` и `uv pip install -r requirements.txt`.
 
-```bash
-pnpm typecheck
-pnpm build
-pnpm preview
+Собрать интерфейс и запустить **один сервер**:
+
+```powershell
+pnpm run build
+.\.venv\Scripts\python.exe -m uvicorn api:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
-Mock-режим включён по умолчанию. Для backend-интеграции скопируйте `.env.example` в `.env.local` и измените:
+Откройте [приложение](http://127.0.0.1:8000/) и нажмите **«Загрузить контрольный пример»**.
+Расходы: 95, остаток: 5; Score: 52.55768 → 56.54307; критических показателей: 2 → 0.
+Калькулятор, скачивание JSON и слайды по шаблону работают **без API-ключей**.
+Если порт занят другим сервером, используйте `--port 8010` и откройте
+[приложение на другом порту](http://127.0.0.1:8010/).
+После изменения backend или новой сборки перезапустите сервер и обновите страницу.
 
-```dotenv
-VITE_ANALYSIS_MODE=api
+Для разработки с автообновлением:
+- первый терминал: `.\.venv\Scripts\python.exe -m uvicorn api:create_app --factory --reload --port 8000`;
+- второй терминал: `pnpm dev`, затем [интерфейс Vite](http://127.0.0.1:4173/).
+Vite перенаправляет `/api` на `127.0.0.1:8000`. Ключи в браузер не передаются.
+`pnpm preview` не заменяет backend; для проверки собранного приложения используйте FastAPI.
+
+В `pnpm-workspace.yaml` задано локальное хранилище и `nodeLinker: hoisted`,
+чтобы установка на Windows не требовала прав администратора для символьных ссылок.
+Если старый pnpm не читает эти настройки:
+`pnpm install --frozen-lockfile --store-dir node_modules/.pnpm-store --config.node-linker=hoisted`.
+
+## Включить настоящий AI
+
+Создайте `.env` из `.env.example` **только если `.env` ещё нет**:
+
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
-Ключи OpenAI и NVIDIA не должны иметь префикс `VITE_` и не должны попадать во frontend. Они хранятся только в server-side environment/secret manager.
+Заполните его локально и перезапустите сервер:
+- OpenAI: `OPENAI_API_KEY`; по умолчанию `OPENAI_MODEL=gpt-4o`.
+- NVIDIA: `NVIDIA_API_KEY` и точный `NVIDIA_MODEL` из вашего примера API;
+  при необходимости измените `NVIDIA_BASE_URL` и `NVIDIA_OUTPUT_MODE`.
+- Достаточно одного провайдера. **Авто** использует OpenAI, затем NVIDIA при ошибке;
+  если настроена только NVIDIA, используется она. Явный выбор провайдера не делает fallback.
+- Модель NVIDIA не угадана автоматически: ID и поддержку JSON-режима нужно проверить
+  для вашего endpoint. Некорректная конфигурация LLM не останавливает калькулятор.
+- `.env` загружается сервером и CLI; переменные процесса имеют приоритет.
+  Не добавляйте ключам префикс `VITE_`, не коммитьте `.env`, не отправляйте ключи в чат.
 
-## Стек
+Нет ключей — UI показывает причину недоступности AI, а не имитацию ответа.
+Работа с реальными провайдерами требует действительных ключей, квот и платных
+запросов. Автоматические тесты используют подменённый HTTP/провайдер.
+Перед публикацией сервера в интернет добавьте авторизацию, лимиты расходов
+и rate limiting; текущий запуск предназначен для localhost/демонстрации.
 
-- React 19 + TypeScript 7 + Vite 8;
-- Recharts 3.10 для radar chart;
-- react-markdown 10, remark-gfm и rehype-sanitize;
-- Lucide React для интерфейсных иконок;
-- CSS без UI-фреймворка — дизайн-система и responsive layout находятся в одном слое.
+## HTTP-контракт для команды
 
-Выбор Recharts опирается на composable React API, SVG-рендеринг, `ResponsiveContainer`, типизацию и встроенный accessibility layer. Для Vue-версии ближайшая замена — Apache ECharts с `series.type = "radar"`.
+[Swagger](http://127.0.0.1:8000/docs) содержит модели запросов и ответов.
 
-## Компонентная архитектура
+| Метод | Путь | Назначение |
+| --- | --- | --- |
+| GET | `/api/health` | Готовность приложения и список настроенных провайдеров; не проверка ключей у провайдера |
+| GET | `/api/catalog` | 14 мер, 5 районов, конфликты/синергии, лимиты, методика и серверная база |
+| POST | `/api/simulate` | Строгая проверка пяти решений и полный JSON расчёта v2 |
+| POST | `/simulate` | Совместимый прежний адрес калькулятора |
+| POST | `/api/analyze` | Повторная серверная проверка/расчёт и LLM-пояснение |
 
-```text
-App
-├── TopBar
-├── DecisionCatalog
-│   ├── search and direction filters
-│   ├── 14 MeasureCard items
-│   └── balanced demo plan action
-├── workspace
-│   ├── PlanDock
-│   │   ├── 5 DecisionSlot items
-│   │   ├── BudgetMeter
-│   │   └── Analyze CTA
-│   └── ImpactDashboard
-│       ├── DistrictTabs
-│       ├── RadarChart
-│       └── ImpactMatrix 5 × 5
-├── AiAnalysisPanel
-│   ├── ProviderSwitch
-│   ├── MarkdownStream
-│   └── AnalysisActions
-└── PitchCarousel
-    ├── PitchSlide
-    ├── CarouselControls
-    └── SpeakerNotes
-```
-
-Ключевые файлы:
-
-| Файл | Ответственность |
-|---|---|
-| `src/data.ts` | 14 мер, пять районов, baseline, sensitivity, направления и лимиты |
-| `src/hooks/useSimulation.ts` | выбранные меры, бюджет, замена, пять слотов, готовность к анализу |
-| `src/lib/simulation.ts` | расчёт projected metrics, district/city scores и дельт |
-| `src/components/DecisionCatalog.tsx` | каталог, поиск, фильтры и состояния карточек |
-| `src/components/PlanDock.tsx` | корзина решений, budget meter и CTA |
-| `src/components/ImpactDashboard.tsx` | radar chart, районные tabs и матрица 5×5 |
-| `src/services/analysisStream.ts` | mock-stream и production SSE parser |
-| `src/hooks/useAnalysisStream.ts` | буферизация дельт, status, cancel и plan version |
-| `src/components/AiAnalysisPanel.tsx` | provider UI, Markdown и streaming UX |
-| `src/services/pitchService.ts` | API/mock transport и runtime-проверка 3–4 слайдов |
-| `src/components/PitchCarousel.tsx` | modal-карусель и презентационный режим |
-
-## Правила корзины и бюджета
-
-Текущая продуктовая конфигурация требует ровно одного решения из каждого направления. Это снимает неоднозначность исходного ТЗ и гарантирует, что все пять осей получат осознанное решение.
-
-При выборе второй меры того же направления старая мера заменяется атомарно:
-
-```ts
-nextSpent = spent - currentDirectionMeasure.cost + candidate.cost;
-```
-
-Изменение принимается только при выполнении всех инвариантов:
-
-```ts
-nextSpent <= 100;
-selectedMeasures.length <= 5;
-uniqueDirections.size === selectedMeasures.length;
-```
-
-Анализ доступен только когда:
-
-```ts
-selectedMeasures.length === 5 &&
-spent <= 100 &&
-allFiveDirectionsAreCovered;
-```
-
-Эти проверки должны быть повторены на backend. Frontend нельзя считать авторитетным источником стоимости или правил сценария.
-
-## Логика визуализации
-
-Для каждого района хранится исходный нормализованный вектор по шкале `0…100`:
-
-```ts
-type ScoreVector = Record<
-  'transport' | 'ecology' | 'social' | 'safety' | 'services',
-  number
->;
-```
-
-Предварительный preview рассчитывается так:
-
-```ts
-delta = round(sum(measureImpact * coverageFactor * districtSensitivity));
-projected = clamp(baseline + delta, 0, 100);
-districtScore = average(projectedAcrossFiveDirections);
-cityScore = average(districtScores);
-```
-
-LLM не является источником чисел. После появления backend-модели авторитетные `baseline`, `projected`, `delta` и `Astana Quality of Life Score` должны приходить отдельным структурированным событием; LLM только объясняет результат.
-
-### Почему не пять полигонов на одном radar chart
-
-Пять районов × пять осей дают визуальный шум и плохо читаются на мобильном. Поэтому интерфейс использует два взаимодополняющих представления:
-
-1. Radar «до / после» для одного выбранного района.
-2. Точную HTML-матрицу район × направление для всех 25 дельт.
-
-Цвет в матрице не является единственным носителем смысла: каждая ячейка содержит знак, число и стрелку, а `title` показывает `baseline → projected`.
-
-### Предлагаемый reusable API radar chart
-
-```ts
-interface RadarAxisDatum {
-  direction: Direction;
-  label: string;
-  baseline: number;
-  projected: number;
-  delta: number;
-}
-
-interface DistrictRadarProps {
-  districtId: DistrictId;
-  districtLabel: string;
-  data: RadarAxisDatum[];
-  domain?: readonly [number, number]; // default [0, 100]
-  height?: number;                    // default 320
-  showBaseline?: boolean;             // default true
-  showProjected?: boolean;            // default true
-  loading?: boolean;
-  selectedDirection?: Direction;
-  onDirectionSelect?: (direction: Direction) => void;
-}
-```
-
-Во всех районах применяется единый domain `[0, 100]`; иначе визуальное сравнение будет вводить в заблуждение. Baseline — нейтральная пунктирная линия, projected — акцентная сплошная область.
-
-## AI streaming
-
-Основной transport — `fetch POST + ReadableStream`: сценарию нужен JSON body, выбранный provider и `AbortController`. Нативный `EventSource` не позволяет отправить POST body и произвольные headers.
-
-### Запрос
-
-```http
-POST /api/ai/analysis/stream
-Content-Type: application/json
-Accept: text/event-stream
-```
+Пример запроса AI:
 
 ```json
 {
-  "decisionIds": ["id-1", "id-2", "id-3", "id-4", "id-5"],
-  "provider": "consensus",
-  "locale": "ru-KZ",
-  "budgetLimit": 100
+  "measure_ids": ["M1", "M2", "M4", "M10", "M12"],
+  "district_assignments": {"M1": "esil", "M4": "nura", "M10": "nura"},
+  "provider": "auto"
 }
 ```
 
-### Ответ
+Ответ AI содержит `simulation` (полный результат калькулятора), `assessment`
+(четыре текстовых поля, описанных ниже) и `provider_used` (кто действительно
+ответил, включая fallback). Клиентские score/стоимости не принимаются.
+Ошибка плана — 422 и **никакого запроса в LLM**; отсутствие конфигурации —
+503; невалидный ответ/сбой внешних API — 502. Расчёт отдельно доступен
+через `/api/simulate`, поэтому ошибка AI не удаляет числа из интерфейса.
 
-```text
-event: meta
-data: {"requestId":"run_123","provider":"openai"}
+Транспорт — обычный JSON после полной валидации ответа. Старые mock/SSE-маршруты
+`/api/ai/analysis/stream`, `/api/ai/pitch` и режим `consensus` не используются.
+Отмена в UI прекращает ожидание и запрещает показ устаревшего ответа; уже
+отправленный провайдеру запрос может продолжить выполняться и тарифицироваться.
+Слайды собираются локально **по шаблону из серверных значений**, не выдаются
+за результат работы LLM и доступны даже без ключей.
 
-event: delta
-data: {"text":"## Сильные стороны\n"}
+## Проверка
 
-event: delta
-data: {"text":"- Снижение транспортной нагрузки..."}
-
-event: done
-data: {"finishReason":"stop"}
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest -q
+pnpm run typecheck
+pnpm run build
 ```
 
-После начала `200 OK` сервер уже не может изменить HTTP status, поэтому runtime-ошибка передаётся отдельным событием:
-
-```text
-event: error
-data: {"code":"UPSTREAM_TIMEOUT","message":"Провайдер не ответил","retryable":true}
-```
-
-Production response headers:
-
-```http
-Content-Type: text/event-stream; charset=utf-8
-Cache-Control: no-cache, no-transform
-X-Accel-Buffering: no
-```
-
-Парсер сохраняет хвост между network chunks: граница `reader.read()` не совпадает с границей SSE event. При размонтировании, изменении плана или нажатии «Остановить» активный `AbortController` отменяется. Старый готовый текст не исчезает при изменении корзины, а помечается как устаревший.
-
-Markdown всегда перерисовывается из полного накопленного буфера. Курсор — отдельный DOM-элемент, чтобы не ломать незакрытые `**`, таблицы или code fences. Screen reader получает только редкие status-сообщения, а не каждый токен.
-
-## Генерация питча
-
-`POST /api/ai/pitch` получает пять решений и итоговый analysis Markdown. Backend должен вернуть структурированный deck, а не свободный текст:
-
-```ts
-interface PitchDeck {
-  slides: PitchSlideData[]; // min 3, max 4
-}
-
-interface PitchSlideData {
-  id: string;
-  eyebrow: string;
-  title: string;
-  bullets: string[];
-  metrics?: Array<{ label: string; value: string; delta?: number }>;
-  speakerNotes: string;
-  tone: 'ink' | 'mint' | 'amber' | 'blue';
-}
-```
-
-Frontend валидирует количество и обязательные поля. Рекомендуемая история из четырёх слайдов:
-
-1. Исходная ситуация и цель.
-2. Пять решений и бюджет.
-3. Изменения по районам и Quality of Life Score.
-4. Риски, компромиссы и следующий шаг.
-
-Карусель поддерживает `ArrowLeft`, `ArrowRight`, `Home`, `End`, touch swipe, точки прогресса, заметки спикера и печать. На мобильном она превращается в полноэкранный режим.
-
-## Backend boundary
-
-Frontend вызывает только собственные `/api/ai/...`. На backend остаются:
-
-- OpenAI/NVIDIA API keys;
-- выбор модели и provider fallback;
-- rate limits, retries и timeout;
-- проверка цен и ровно пяти решений;
-- расчёт структурированных метрик;
-- нормализация provider-specific stream в единые события;
-- аудит и сохранение run history.
-
-Если нужен автоматический reconnect, используйте двухшаговый transport:
-
-1. `POST /api/ai/analysis-jobs` → `{ jobId, shortLivedStreamToken }`.
-2. `EventSource(GET /api/ai/analysis-jobs/:jobId/events)` с `id:` и resume по `Last-Event-ID`.
-
-Нельзя передавать provider API key в query string или браузерный JavaScript.
-
-## Проверенный сценарий
-
-Вручную проверены:
-
-- desktop 1600×1000 и mobile 390×844;
-- отсутствие горизонтального overflow на mobile;
-- добавление и замена мер;
-- состояние 5/5 и разблокировка CTA;
-- комбинация на 96/100 и блокировка меры, которая дала бы 102/100;
-- потоковый status, Markdown-разделы и завершение;
-- stale state при изменении плана;
-- открытие карусели, четыре слайда и переход между ними;
-- mobile-питч в полноэкранном режиме;
-- TypeScript и production build.
-
-Для следующего этапа стоит добавить unit-тесты на `useSimulation`, parser fragmented SSE/UTF-8 chunks и Playwright E2E для маршрута `5 решений → анализ → питч`.
-
-## Полезные официальные ссылки
-
-- [Recharts RadarChart API](https://recharts.github.io/en-US/api/RadarChart/)
-- [Recharts accessibility](https://github.com/recharts/recharts/wiki/Recharts-and-accessibility)
-- [react-markdown](https://github.com/remarkjs/react-markdown)
-- [MDN event stream format](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#event_stream_format)
-- [MDN streaming fetch response](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch#streaming_the_response_body)
-# hack-92a11647-hackwolves
-Hackathon team repository for HackWolves больше коммитов
+Проверяются формулы, строгие ограничения, совпадение JSON-примера с API,
+передача полного контекста в LLM, fallback, фактический провайдер,
+невалидный ввод без платных запросов, отсутствие ключей, таймауты и закрытие клиентов.
+В UI проверьте: контрольный пример → смена района → новый Score → AI →
+слайды; новый план не должен показывать старый расчёт как актуальный.
 
 ## Математическое ядро «Аким на 5 часов»
 
 `city_simulator.py` содержит независимый от HTTP класс `CitySimulator`, строгие
 модели входных данных и JSON-результата. `api.py` предоставляет FastAPI-приложение.
 `data/city.json` восстанавливает данные из предоставленного SQL/JSON: 5 районов,
-14 мер, 3 синергии, 3 несовместимости. Исходный повреждённый SQL не исполняется.
+14 мер, 3 синергии, 3 несовместимости. Сервер использует JSON; dataset.sql — PostgreSQL seed для отдельной БД.
 
 ### Формула из датасета
 
@@ -422,7 +216,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/simulate -ContentType 
 
 Полный пример ответа `POST /simulate` для этих пяти решений находится в
 [`examples/response.json`](examples/response.json). Это фактический результат
-калькулятора с текущей демонстрационной конфигурацией, не ответ LLM. Он содержит
+калькулятора с текущей подтверждённой конфигурацией, не ответ LLM. Он содержит
 метрики и дельты всех пяти районов, штрафы, синергии, бюджет и описание методики.
 Соответствующий запрос: [`examples/request.json`](examples/request.json).
 
@@ -491,6 +285,12 @@ payload = simulator.to_payload(
 Точные значения лучше показывать непосредственно из DTO; LLM даёт объяснение.
 
 ### SQL-адаптер
+
+`dataset.sql` восстановлен как PostgreSQL seed для **пустой** базы: районы,
+меры, синергии, конфликты и параметры методики. Он не содержит `DROP` и не
+обновляет существующие таблицы. Генератор `python -m examples.export_sql`
+печатает SQL из канонических JSON; регрессионный тест проверяет совпадение seed.
+Сам HTTP-сервер по-прежнему читает JSON: подключение PostgreSQL для запуска не нужно.
 
 `Dataset.from_records(districts=..., measures=..., synergies=..., conflicts=...)`
 принимает уже полученные словари строк БД: нижний регистр `t1`, поле
@@ -629,8 +429,7 @@ JSON mode сам по себе не гарантирует схему. Во вс
 
 После исчерпания попыток возникает `AssessmentUnavailable`, а не фиктивная
 успешная оценка. Поле `exc.failures` содержит провайдера и безопасный код
-причины без исходного текста ответа или API-ключа. На HTTP-границе обработайте
-исключение, например как 503; математический результат остаётся доступен.
+причины без исходного текста ответа или API-ключа. HTTP-маршрут /api/analyze возвращает 502; математический результат остаётся доступен.
 Гарантия модуля: **проверенный результат с четырьмя ключами либо исключение**.
 Обещать успешный JSON при недоступных внешних API невозможно.
 
@@ -649,4 +448,3 @@ fallback проверяются без ключей и платных запро
 [NVIDIA NIM Structured Generation](https://docs.nvidia.com/nim/large-language-models/1.4.0/structured-generation.html).
 Формат `nvext` описан для указанной версии NIM; возможности вашего endpoint
 нужно сверять с его документацией.
-ппп

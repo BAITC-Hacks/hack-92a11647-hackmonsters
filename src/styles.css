@@ -2401,6 +2401,41 @@ h3 {
   }
 }
 
+.district-selector {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.district-selector select {
+  max-width: 100%;
+  border: 1px solid #ced8d0;
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: #fff;
+  color: #163f34;
+}
+
+.validation-hint.is-error {
+  color: #a33528;
+}
+
+.startup-panel {
+  margin: 24px;
+  padding: 32px;
+}
+
+.impact-matrix-wrap {
+  overflow-x: auto;
+}
+
+.quality-score {
+  flex-wrap: wrap;
+}
+
 @media print {
   body * {
     visibility: hidden;

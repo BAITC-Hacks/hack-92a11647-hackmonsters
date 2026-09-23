@@ -21,6 +21,7 @@ interface AiAnalysisPanelProps {
   markdown: string;
   error: string;
   provider: AnalysisProvider;
+  providerUsed: string;
   isStale: boolean;
   pitchLoading: boolean;
   onProviderChange: (provider: AnalysisProvider) => void;
@@ -30,7 +31,7 @@ interface AiAnalysisPanelProps {
 }
 
 const PROVIDERS: { id: AnalysisProvider; label: string; short: string }[] = [
-  { id: 'consensus', label: 'Консенсус моделей', short: 'Auto' },
+  { id: 'auto', label: 'OpenAI → NVIDIA при ошибке; иначе доступный провайдер', short: 'Авто' },
   { id: 'openai', label: 'OpenAI', short: 'OAI' },
   { id: 'nvidia', label: 'NVIDIA NIM', short: 'NIM' },
 ];
@@ -41,6 +42,7 @@ export function AiAnalysisPanel({
   markdown,
   error,
   provider,
+  providerUsed,
   isStale,
   pitchLoading,
   onProviderChange,
@@ -91,7 +93,7 @@ export function AiAnalysisPanel({
         <span className={`stream-status status-${status}`}>
           <i aria-hidden="true" />
           {status === 'streaming'
-            ? 'поток'
+            ? 'анализ'
             : status === 'complete'
               ? 'готово'
               : status === 'error'
@@ -123,7 +125,7 @@ export function AiAnalysisPanel({
 
       <div className="ai-security-note">
         <ShieldCheck size={15} aria-hidden="true" />
-        <span>Ключи провайдеров остаются на backend</span>
+        <span>{providerUsed ? `Ответил: ${providerUsed}. ` : ''}Ключи остаются на backend</span>
       </div>
 
       {isStale && hasResult && (
@@ -236,15 +238,15 @@ export function AiAnalysisPanel({
       <button
         type="button"
         className="pitch-button"
-        disabled={status !== 'complete' || isStale || pitchLoading}
+        disabled={!canAnalyze || pitchLoading}
         onClick={onGeneratePitch}
       >
         <span className="pitch-button__icon">
           <FileText size={18} aria-hidden="true" />
         </span>
         <span>
-          <strong>{pitchLoading ? 'Собираем слайды…' : 'Сгенерировать питч'}</strong>
-          <small>3–4 слайда для защиты перед жюри</small>
+          <strong>{pitchLoading ? 'Собираем слайды…' : 'Собрать слайды расчёта'}</strong>
+          <small>4 слайда по шаблону · без выдуманных AI-фактов</small>
         </span>
         <Sparkles size={17} aria-hidden="true" />
       </button>

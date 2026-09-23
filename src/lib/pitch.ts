@@ -1,104 +1,45 @@
-import { DIRECTIONS } from '../data';
-import { getCityScores, getDirectionDeltas } from './simulation';
-import type {
-  DistrictProjection,
-  Measure,
-  PitchSlideData,
-} from '../types';
+import type { PitchSlideData, SimulationResult } from '../types';
+import { formatDelta } from './simulation';
 
-interface PitchInput {
-  selectedMeasures: Measure[];
-  projections: DistrictProjection[];
-  spent: number;
-}
-
-export function buildPitchSlides({
-  selectedMeasures,
-  projections,
-  spent,
-}: PitchInput): PitchSlideData[] {
-  const score = getCityScores(projections);
-  const baseline = [...projections].sort(
-    (a, b) => a.baselineScore - b.baselineScore,
-  )[0];
-  const directionDeltas = getDirectionDeltas(projections).sort(
-    (a, b) => b.delta - a.delta,
-  );
-  const leadingDistrict = [...projections].sort(
-    (a, b) =>
-      b.projectedScore - b.baselineScore -
-      (a.projectedScore - a.baselineScore),
-  )[0];
-
+export function buildPitchSlides(result: SimulationResult): PitchSlideData[] {
   return [
     {
-      id: 'context',
-      eyebrow: '01 · Контекст',
-      title: 'Пять часов, чтобы изменить траекторию города',
+      id: 'context', eyebrow: '01 · Методика', title: 'Аким на 5 часов',
       bullets: [
-        `Стартовый городской индекс — ${score.baseline}/100.`,
-        `Самая уязвимая точка — ${baseline.district.shortName}: ${baseline.baselineScore}/100.`,
-        'Цель — сбалансировать пять направлений без превышения бюджета.',
+        `Исходный городской Score: ${result.score.base}.`,
+        `Горизонт: ${result.methodology.horizon_periods} (${result.methodology.period_unit}).`,
+        `Методика: ${result.methodology.version}; статус: ${result.methodology.status}.`,
       ],
-      metrics: [
-        { label: 'Бюджет', value: '100 у.е.' },
-        { label: 'Районов', value: '5' },
-        { label: 'Решений', value: '5' },
-      ],
-      speakerNotes:
-        'Начните с ограничения: одинаковый бюджет для всех команд и необходимость сделать осознанный выбор.',
+      speakerNotes: 'Слайды собраны из серверного расчёта по шаблону, без генерации дополнительных фактов.',
       tone: 'ink',
     },
     {
-      id: 'plan',
-      eyebrow: '02 · План',
-      title: 'Одна связная программа вместо пяти разрозненных мер',
-      bullets: selectedMeasures.map((measure) => {
-        const direction = DIRECTIONS.find((item) => item.id === measure.direction);
-        return `${direction?.label}: ${measure.title} — ${measure.cost} у.е.`;
-      }),
+      id: 'plan', eyebrow: '02 · План', title: 'Выбранные меры',
+      bullets: result.selected_measures.map((measure) =>
+        `${measure.id}: ${measure.name} — ${measure.cost} у.е.; ${measure.target_districts.map((id) => result.districts.find((district) => district.id === id)?.name ?? id).join(', ')}.`),
       metrics: [
-        { label: 'Использовано', value: `${spent}/100` },
-        { label: 'Резерв', value: `${100 - spent} у.е.` },
+        { label: 'Расходы', value: `${result.budget.spent} у.е.` },
+        { label: 'Остаток', value: `${result.budget.remaining} у.е.` },
       ],
-      speakerNotes:
-        'Свяжите каждую меру с конкретным городским результатом; не читайте список как закупочную ведомость.',
+      speakerNotes: 'Общегородские меры оплачиваются один раз. Районные меры имеют явно заданный район.',
       tone: 'blue',
     },
     {
-      id: 'impact',
-      eyebrow: '03 · Эффект',
-      title: `Quality of Life Score растёт до ${score.projected}/100`,
-      bullets: [
-        `Лидер роста — ${directionDeltas[0].direction.label}: +${directionDeltas[0].delta}.`,
-        `${leadingDistrict.district.shortName} получает наибольшую суммарную дельту.`,
-        'Единая шкала 0–100 позволяет честно сравнить районы и направления.',
-      ],
-      metrics: directionDeltas.slice(0, 3).map((item) => ({
-        label: item.direction.label,
-        value: `+${item.delta}`,
-        delta: item.delta,
-      })),
-      speakerNotes:
-        'Подчеркните, что числовой preview рассчитывается структурированной моделью, а LLM только объясняет результат.',
+      id: 'impact', eyebrow: '03 · Результат', title: `Score: ${result.score.final}`,
+      bullets: result.districts.map((district) => `${district.name}: D ${district.score.base} → ${district.score.final} (${formatDelta(district.score.delta)}).`),
+      metrics: [{ label: 'Дельта Score', value: formatDelta(result.score.delta), delta: result.score.delta }],
+      speakerNotes: 'Score рассчитан сервером с учётом долей населения, слабейшего района и критических показателей. Он не равен среднему по районам.',
       tone: 'mint',
     },
     {
-      id: 'risks',
-      eyebrow: '04 · Контроль',
-      title: 'Результат измерим — риски управляемы',
+      id: 'risks', eyebrow: '04 · Контроль', title: 'Штрафы и ограничения',
       bullets: [
-        [...selectedMeasures].sort((a, b) => b.cost - a.cost)[0].tradeoff,
-        `Слабее всего меняется направление «${directionDeltas.at(-1)?.direction.label}» — нужен квартальный контроль.`,
-        'Публикуем baseline, фактические дельты и причины отклонений.',
-        'Решение: пилот → проверка данных → масштабирование.',
+        `Критических показателей: ${result.score_breakdown.n_crit_final}.`,
+        `Штраф города: ${result.score_breakdown.critical_penalty.final}.`,
+        ...result.warnings,
+        'Результат — модельный сценарий, а не обещание фактического эффекта.',
       ],
-      metrics: [
-        { label: 'Резерв', value: `${100 - spent} у.е.` },
-        { label: 'Контроль', value: '90 дней' },
-      ],
-      speakerNotes:
-        'Завершите конкретным следующим шагом: 90-дневный пилот и открытая проверка показателей.',
+      speakerNotes: 'Рекомендации AI требуют проверки командой. Новый набор мер нужно рассчитать заново.',
       tone: 'amber',
     },
   ];

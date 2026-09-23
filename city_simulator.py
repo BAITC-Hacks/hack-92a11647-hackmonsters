@@ -321,6 +321,27 @@ class CitySimulator:
         self._districts = {district.id: district for district in self._dataset.districts}
         self._measures = {measure.id: measure for measure in self._dataset.measures}
 
+    def catalog(self) -> dict[str, Any]:
+        """Expose source data and baseline through the same scoring path.
+
+        The baseline is not a valid five-measure plan. It only supplies initial
+        indicators and Score, without bypassing public selection validation.
+        Serialized configuration is independent of the simulator's models.
+        """
+        effects = {
+            district_id: {metric: [] for metric in METRICS}
+            for district_id in self._districts
+        }
+        baseline = self._summarize(effects, [], []).model_dump(mode="json")
+        return {
+            "dataset": self._dataset.model_dump(mode="json"),
+            "methodology": self._rules.model_dump(mode="json"),
+            "baseline": {"score": baseline["score"]["base"],
+                         "score_breakdown": baseline["score_breakdown"],
+                         "districts": baseline["districts"]},
+            "budget_limit": BUDGET_LIMIT, "required_decisions": 5, "max_per_category": 2,
+        }
+
     def validate_selection(self, request: SimulationRequest) -> list[ValidationIssue]:
         """Return all business-rule violations before any metric is changed.
 
@@ -463,6 +484,15 @@ class CitySimulator:
                 district_id = request.district_assignments[synergy.target.measure_id]
                 accumulate("synergy", sorted(synergy.pair), district_id, synergy.bonus, factor)
 
+        return self._summarize(effects, selected_details, contributions)
+
+    def _summarize(
+        self,
+        effects: dict[str, dict[Metric, list[float]]],
+        selected_details: list[SelectedMeasure],
+        contributions: list[Contribution],
+    ) -> SimulationResult:
+        """Aggregate effects and apply the same district/city formula for every view."""
         results: list[DistrictResult] = []
         penalties: list[Penalty] = []
         weighted_base: list[float] = []
@@ -517,7 +547,7 @@ class CitySimulator:
         if mismatched_baselines:
             warnings.append("Предоставленный base_d отличается от расчётной базы: " + ", ".join(mismatched_baselines)
                             + ". Он сохранён как provided_base_d, но не смешивается с расчётным Score.")
-        spent = sum(measure.cost for measure in selected)
+        spent = sum(measure.cost for measure in selected_details)
         base_average, final_average = fsum(weighted_base), fsum(weighted_final)
         base_min, final_min = min(base_scores), min(final_scores)
         base_average_component = self._rules.city_average_weight * base_average

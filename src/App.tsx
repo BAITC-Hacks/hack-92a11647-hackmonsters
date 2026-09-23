@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Database, X } from 'lucide-react';
 import { AiAnalysisPanel } from './components/AiAnalysisPanel';
 import { DecisionCatalog } from './components/DecisionCatalog';
@@ -14,135 +14,64 @@ import type { AnalysisProvider, PitchSlideData } from './types';
 function App() {
   const simulation = useSimulation();
   const analysis = useAnalysisStream();
-  const [provider, setProvider] = useState<AnalysisProvider>('consensus');
-  const [notice, setNotice] = useState<{
-    message: string;
-    tone: 'success' | 'error';
-  } | null>(null);
+  const [provider, setProvider] = useState<AnalysisProvider>('auto');
+  const [notice, setNotice] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
   const [pitchOpen, setPitchOpen] = useState(false);
-  const [pitchLoading, setPitchLoading] = useState(false);
   const [pitchSlides, setPitchSlides] = useState<PitchSlideData[]>([]);
-
-  const planKey = useMemo(
-    () => [...simulation.selectedIds].sort().join('|'),
-    [simulation.selectedIds],
-  );
-  const isStale = Boolean(
-    analysis.analyzedPlanKey && analysis.analyzedPlanKey !== planKey,
-  );
+  const analysisKey = `${simulation.planKey}|${provider}`;
+  const isStale = Boolean(analysis.analyzedPlanKey && analysis.analyzedPlanKey !== analysisKey);
 
   useEffect(() => {
     if (analysis.status === 'streaming' && isStale) analysis.cancel();
   }, [analysis.status, isStale, analysis.cancel]);
-
+  useEffect(() => { setPitchOpen(false); }, [simulation.planKey]);
   useEffect(() => {
     if (!notice) return;
-    const timer = window.setTimeout(() => setNotice(null), 3600);
+    const timer = window.setTimeout(() => setNotice(null), 4000);
     return () => window.clearTimeout(timer);
   }, [notice]);
 
   const handleAnalyze = () => {
-    if (!simulation.canAnalyze) return;
-    void analysis.start({
-      selectedMeasures: simulation.selectedMeasures,
-      projections: simulation.projections,
-      spent: simulation.spent,
-      provider,
-      planKey,
-    });
+    if (simulation.canAnalyze) void analysis.start(simulation.plan, provider, analysisKey);
   };
-
-  const handleGeneratePitch = async () => {
-    if (analysis.status !== 'complete' || isStale) return;
-    setPitchLoading(true);
-    try {
-      const slides = await generatePitchDeck({
-        selectedMeasures: simulation.selectedMeasures,
-        projections: simulation.projections,
-        spent: simulation.spent,
-        analysisMarkdown: analysis.markdown,
-      });
-      setPitchSlides(slides);
-      setPitchOpen(true);
-    } catch (caught) {
-      setNotice({
-        message:
-          caught instanceof Error ? caught.message : 'Не удалось сгенерировать питч.',
-        tone: 'error',
-      });
-    } finally {
-      setPitchLoading(false);
-    }
-  };
-
   const closePitch = useCallback(() => setPitchOpen(false), []);
+  const catalog = simulation.catalog;
 
   return (
     <div className="app-shell">
       <TopBar selectedCount={simulation.selectedMeasures.length} />
-
-      <main className="dashboard-grid">
-        <DecisionCatalog
-          selectedMeasures={simulation.selectedMeasures}
-          spent={simulation.spent}
-          onSelect={simulation.selectMeasure}
-          onNotice={(message, tone) => setNotice({ message, tone })}
-          onBalancedPlan={simulation.applyBalancedPlan}
-        />
-
-        <div className="workspace-column">
-          <PlanDock
-            selectedMeasures={simulation.selectedMeasures}
-            spent={simulation.spent}
-            canAnalyze={simulation.canAnalyze}
-            isAnalyzing={analysis.status === 'streaming'}
-            isStale={isStale}
-            onRemove={(id) => {
-              const message = simulation.removeMeasure(id);
-              if (message) setNotice({ message, tone: 'success' });
-            }}
-            onReset={() => {
-              simulation.reset();
-              setNotice({ message: 'План очищен.', tone: 'success' });
-            }}
-            onAnalyze={handleAnalyze}
-          />
-          <ImpactDashboard
-            projections={simulation.projections}
-            cityScore={simulation.cityScores}
-          />
-        </div>
-
-        <AiAnalysisPanel
-          canAnalyze={simulation.canAnalyze}
-          status={analysis.status}
-          markdown={analysis.markdown}
-          error={analysis.error}
-          provider={provider}
-          isStale={isStale}
-          pitchLoading={pitchLoading}
-          onProviderChange={setProvider}
-          onAnalyze={handleAnalyze}
-          onCancel={analysis.cancel}
-          onGeneratePitch={() => void handleGeneratePitch()}
-        />
-      </main>
-
-      <footer className="data-footer">
-        <span><Database size={14} aria-hidden="true" /> Синтетический демо-датасет</span>
-        <span>5 районов · 5 направлений · шкала 0–100</span>
-        <span>Версия сценария 0.1</span>
-      </footer>
-
-      {notice && (
-        <div className={`toast toast-${notice.tone}`} role="status" aria-live="polite">
-          <span>{notice.message}</span>
-          <button type="button" onClick={() => setNotice(null)} aria-label="Закрыть уведомление">
-            <X size={15} aria-hidden="true" />
-          </button>
-        </div>
+      {!catalog ? (
+        <main className="panel startup-panel" role="status">
+          <h1>{simulation.catalogError ? 'Не удалось подключиться к серверу' : 'Загружаем каталог…'}</h1>
+          <p>{simulation.catalogError || 'Получаем исходные показатели и правила расчёта.'}</p>
+          {simulation.catalogError && <button type="button" className="secondary-action" onClick={simulation.retryCatalog}>Повторить</button>}
+        </main>
+      ) : (
+        <main className="dashboard-grid">
+          <DecisionCatalog catalog={catalog} selectedMeasures={simulation.selectedMeasures} onSelect={simulation.selectMeasure}
+            onNotice={(message, tone) => setNotice({ message, tone })} onExample={simulation.applyExample} />
+          <div className="workspace-column">
+            <PlanDock catalog={catalog} selectedMeasures={simulation.selectedMeasures} assignments={simulation.plan.district_assignments}
+              spent={simulation.spent} result={simulation.result} pending={simulation.pending} error={simulation.error}
+              isAnalyzing={analysis.status === 'streaming'} onRemove={simulation.removeMeasure} onAssign={simulation.assignDistrict}
+              onReset={simulation.reset} onAnalyze={handleAnalyze} />
+            <ImpactDashboard catalog={catalog} result={simulation.result} />
+          </div>
+          <AiAnalysisPanel canAnalyze={simulation.canAnalyze} status={analysis.status} markdown={analysis.markdown}
+            error={analysis.error} provider={provider} providerUsed={analysis.providerUsed} isStale={isStale} pitchLoading={false}
+            onProviderChange={setProvider} onAnalyze={handleAnalyze} onCancel={analysis.cancel}
+            onGeneratePitch={() => {
+              if (!simulation.result) return;
+              setPitchSlides(generatePitchDeck(simulation.result));
+              setPitchOpen(true);
+            }} />
+        </main>
       )}
-
+      <footer className="data-footer"><span><Database size={14} />Серверный каталог · без mock-ответов</span>
+        <span>{catalog?.methodology.version ?? 'Загрузка методики'} · LLM только объясняет расчёт</span></footer>
+      {notice && <div className={`toast toast-${notice.tone}`} role="status" aria-live="polite">
+        <span>{notice.message}</span><button type="button" onClick={() => setNotice(null)} aria-label="Закрыть уведомление"><X size={15} /></button>
+      </div>}
       <PitchCarousel open={pitchOpen} slides={pitchSlides} onClose={closePitch} />
     </div>
   );
