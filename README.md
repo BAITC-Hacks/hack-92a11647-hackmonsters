@@ -1,5 +1,5 @@
 # hack-92a11647-hackwolves
-Hackathon team repository for HackWolves 
+Hackathon team repository for HackWolves надо коммитить
 
 
 ## LLM-прослойка для «Аким на пять часов»
