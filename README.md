@@ -1,5 +1,5 @@
 # hack-92a11647-hackwolves
-Hackathon team repository for HackWolves
+Hackathon team repository for HackWolves больше коммитов
 
 ## Математическое ядро «Аким на 5 часов»
 
