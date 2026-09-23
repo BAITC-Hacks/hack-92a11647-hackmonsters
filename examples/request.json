@@ -1,0 +1,4 @@
+{
+  "measure_ids": ["M1", "M2", "M4", "M10", "M12"],
+  "district_assignments": {"M1": "esil", "M4": "nura", "M10": "nura"}
+}
