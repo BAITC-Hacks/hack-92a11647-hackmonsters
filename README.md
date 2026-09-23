@@ -146,3 +146,4 @@ fallback проверяются без ключей и платных запро
 [NVIDIA NIM Structured Generation](https://docs.nvidia.com/nim/large-language-models/1.4.0/structured-generation.html).
 Формат `nvext` описан для указанной версии NIM; возможности вашего endpoint
 нужно сверять с его документацией.
+ппп
