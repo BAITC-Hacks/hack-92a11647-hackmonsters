@@ -1,119 +1,137 @@
-import { useMemo, useState } from 'react';
-import {
-  BUDGET_LIMIT,
-  DIRECTIONS,
-  MEASURES,
-  REQUIRED_DECISIONS,
-} from '../data';
-import { calculateProjections, getCityScores } from '../lib/simulation';
-import type { Measure } from '../types';
+import { useEffect, useRef, useState } from "react";
+import { planKey, selectionError } from "../lib/simulation";
+import { requestJson } from "../services/api";
+import type { Catalog, Measure, Plan, SimulationResult } from "../types";
 
-export type SelectionResult = {
+const emptyPlan = (): Plan => ({ measure_ids: [], district_assignments: {} });
+export interface SelectionResult {
   ok: boolean;
   message: string;
-};
-
-const INITIAL_SELECTION = [
-  'adaptive-lights',
-  'green-belt',
-  'mobile-clinics',
-];
+}
 
 export function useSimulation() {
-  const [selectedIds, setSelectedIds] = useState<string[]>(INITIAL_SELECTION);
-
-  const selectedMeasures = useMemo(
-    () =>
-      selectedIds
-        .map((id) => MEASURES.find((measure) => measure.id === id))
-        .filter((measure): measure is Measure => Boolean(measure)),
-    [selectedIds],
+  const [catalog, setCatalog] = useState<Catalog | null>(null);
+  const [catalogError, setCatalogError] = useState("");
+  const [reload, setReload] = useState(0);
+  const [plan, setPlan] = useState<Plan>(emptyPlan);
+  const planRef = useRef(plan);
+  const [completed, setCompleted] = useState<{
+    key: string;
+    result: SimulationResult;
+  } | null>(null);
+  const [failed, setFailed] = useState<{ key: string; error: string } | null>(
+    null,
   );
+  const [retry, setRetry] = useState(0);
+  const key = planKey(plan);
 
-  const spent = selectedMeasures.reduce((sum, measure) => sum + measure.cost, 0);
-  const remaining = BUDGET_LIMIT - spent;
-  const coveredDirections = new Set(
-    selectedMeasures.map((measure) => measure.direction),
+  useEffect(() => {
+    const controller = new AbortController();
+    setCatalogError("");
+    requestJson<Catalog>("/api/catalog", controller.signal)
+      .then((value) => {
+        if (!controller.signal.aborted) setCatalog(value);
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) setCatalogError(error.message);
+      });
+    return () => controller.abort();
+  }, [reload]);
+
+  const localError = catalog ? selectionError(plan, catalog) : null;
+  const ready = Boolean(
+    catalog &&
+      plan.measure_ids.length === catalog.required_decisions &&
+      !localError,
   );
-  const projections = useMemo(
-    () => calculateProjections(selectedMeasures),
-    [selectedMeasures],
-  );
-  const cityScores = useMemo(() => getCityScores(projections), [projections]);
-
-  const canAnalyze =
-    selectedMeasures.length === REQUIRED_DECISIONS &&
-    spent <= BUDGET_LIMIT &&
-    DIRECTIONS.every((direction) => coveredDirections.has(direction.id));
-
-  const selectMeasure = (measure: Measure): SelectionResult => {
-    if (selectedIds.includes(measure.id)) {
-      setSelectedIds((current) => current.filter((id) => id !== measure.id));
-      return { ok: true, message: `«${measure.title}» удалено из плана.` };
-    }
-
-    const sameDirection = selectedMeasures.find(
-      (item) => item.direction === measure.direction,
-    );
-    const nextSpent = spent - (sameDirection?.cost ?? 0) + measure.cost;
-
-    if (nextSpent > BUDGET_LIMIT) {
-      return {
-        ok: false,
-        message: `Не хватает ${nextSpent - BUDGET_LIMIT} у.е. Сначала замените более дорогую меру.`,
-      };
-    }
-
-    if (!sameDirection && selectedMeasures.length >= REQUIRED_DECISIONS) {
-      return {
-        ok: false,
-        message: 'Все 5 слотов заняты. Удалите или замените одно решение.',
-      };
-    }
-
-    setSelectedIds((current) => {
-      if (!sameDirection) return [...current, measure.id];
-      return current.map((id) => (id === sameDirection.id ? measure.id : id));
-    });
-
-    return {
-      ok: true,
-      message: sameDirection
-        ? `«${sameDirection.title}» заменено на «${measure.title}».`
-        : `«${measure.title}» добавлено. Выбрано ${selectedMeasures.length + 1} из 5.`,
+  useEffect(() => {
+    if (!ready) return;
+    const controller = new AbortController();
+    setCompleted(null);
+    setFailed(null);
+    const timer = window.setTimeout(() => {
+      requestJson<SimulationResult>("/api/simulate", controller.signal, plan)
+        .then((result) => {
+          if (!controller.signal.aborted) setCompleted({ key, result });
+        })
+        .catch((error) => {
+          if (!controller.signal.aborted)
+            setFailed({ key, error: error.message });
+        });
+    }, 200);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
     };
-  };
+  }, [plan, key, ready, retry]);
 
+  const updatePlan = (next: Plan): SelectionResult => {
+    if (!catalog) return { ok: false, message: "Каталог ещё не загружен." };
+    const error = selectionError(next, catalog);
+    if (error) return { ok: false, message: error };
+    planRef.current = next;
+    setPlan(next);
+    return { ok: true, message: "План обновлён." };
+  };
   const removeMeasure = (id: string) => {
-    const measure = selectedMeasures.find((item) => item.id === id);
-    setSelectedIds((current) => current.filter((item) => item !== id));
-    return measure ? `«${measure.title}» удалено из плана.` : '';
+    const current = planRef.current;
+    const assignments = { ...current.district_assignments };
+    delete assignments[id];
+    return updatePlan({
+      measure_ids: current.measure_ids.filter((item) => item !== id),
+      district_assignments: assignments,
+    });
   };
-
-  const applyBalancedPlan = () => {
-    setSelectedIds([
-      'adaptive-lights',
-      'smart-irrigation',
-      'mobile-clinics',
-      'rapid-response',
-      'utility-twin',
-    ]);
+  const selectMeasure = (measure: Measure, district?: string) => {
+    const current = planRef.current;
+    if (current.measure_ids.includes(measure.id))
+      return removeMeasure(measure.id);
+    return updatePlan({
+      measure_ids: [...current.measure_ids, measure.id],
+      district_assignments: {
+        ...current.district_assignments,
+        ...(measure.measure_type === "District"
+          ? { [measure.id]: district ?? "" }
+          : {}),
+      },
+    });
   };
-
-  const reset = () => setSelectedIds([]);
-
+  const assignDistrict = (id: string, district: string) =>
+    updatePlan({
+      ...planRef.current,
+      district_assignments: {
+        ...planRef.current.district_assignments,
+        [id]: district,
+      },
+    });
+  const result = completed?.key === key && ready ? completed.result : null;
+  const error = localError || (failed?.key === key ? failed.error : "");
+  const selectedMeasures = plan.measure_ids.flatMap(
+    (id) => catalog?.dataset.measures.filter((m) => m.id === id) ?? [],
+  );
   return {
-    selectedIds,
+    catalog,
+    catalogError,
+    reloadCatalog: () => setReload((v) => v + 1),
+    plan,
+    key,
     selectedMeasures,
-    spent,
-    remaining,
-    coveredDirections,
-    projections,
-    cityScores,
-    canAnalyze,
+    spent: selectedMeasures.reduce((sum, m) => sum + m.cost, 0),
+    result,
+    error,
+    calculating: ready && !result && !error,
+    canAnalyze: Boolean(result),
     selectMeasure,
     removeMeasure,
-    applyBalancedPlan,
-    reset,
+    assignDistrict,
+    retryCalculation: () => {
+      setFailed(null);
+      setRetry((v) => v + 1);
+    },
+    reset: () => updatePlan(emptyPlan()),
+    applyExamplePlan: () =>
+      catalog
+        ? updatePlan(structuredClone(catalog.example_plan))
+        : { ok: false, message: "Каталог ещё не загружен." },
   };
 }

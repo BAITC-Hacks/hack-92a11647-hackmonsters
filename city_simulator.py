@@ -290,6 +290,7 @@ class ScoreBreakdown(StrictModel):
 
 class SimulationResult(StrictModel):
     schema_version: str = "2.0"
+    critical_threshold: Literal[40] = CRITICAL_THRESHOLD
     is_valid: Literal[True] = True
     validation_errors: list[ValidationIssue] = Field(default_factory=list)
     budget: Budget
@@ -320,6 +321,10 @@ class CitySimulator:
         self._rules = ScoringRules.model_validate(rules.model_dump())
         self._districts = {district.id: district for district in self._dataset.districts}
         self._measures = {measure.id: measure for measure in self._dataset.measures}
+
+    def catalog(self) -> tuple[Dataset, ScoringRules]:
+        """Return independent snapshots for clients; never expose mutable engine state."""
+        return self._dataset.model_copy(deep=True), self._rules.model_copy(deep=True)
 
     def validate_selection(self, request: SimulationRequest) -> list[ValidationIssue]:
         """Return all business-rule violations before any metric is changed.

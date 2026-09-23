@@ -1,224 +1,179 @@
-import { useMemo, useState } from 'react';
-import {
-  ArrowDownUp,
-  Check,
-  ChevronRight,
-  Gauge,
-  Search,
-  WandSparkles,
-} from 'lucide-react';
-import { BUDGET_LIMIT, DIRECTIONS, MEASURES, REQUIRED_DECISIONS } from '../data';
-import type { SelectionResult } from '../hooks/useSimulation';
-import { formatDelta } from '../lib/simulation';
-import type { Direction, Measure } from '../types';
+import { useState } from "react";
+import { Check, Search, WandSparkles } from "lucide-react";
+import { CATEGORY_COLORS } from "../data";
+import { formatDelta } from "../lib/simulation";
+import type { SelectionResult } from "../hooks/useSimulation";
+import type { Catalog, Measure, Plan } from "../types";
 
-type Filter = 'all' | Direction;
-
-interface DecisionCatalogProps {
-  selectedMeasures: Measure[];
-  spent: number;
-  onSelect: (measure: Measure) => SelectionResult;
-  onNotice: (message: string, tone: 'success' | 'error') => void;
-  onBalancedPlan: () => void;
+interface Props {
+  catalog: Catalog;
+  plan: Plan;
+  onSelect: (measure: Measure, district?: string) => SelectionResult;
+  onAssign: (id: string, district: string) => SelectionResult;
+  onNotice: (result: SelectionResult) => void;
+  onExample: () => SelectionResult;
 }
-
 export function DecisionCatalog({
-  selectedMeasures,
-  spent,
+  catalog,
+  plan,
   onSelect,
+  onAssign,
   onNotice,
-  onBalancedPlan,
-}: DecisionCatalogProps) {
-  const [filter, setFilter] = useState<Filter>('all');
-  const [query, setQuery] = useState('');
-  const [sortBy, setSortBy] = useState<'default' | 'cost'>('default');
-
-  const visibleMeasures = useMemo(() => {
-    const normalized = query.trim().toLocaleLowerCase('ru');
-    const filtered = MEASURES.filter((measure) => {
-      const matchesDirection = filter === 'all' || measure.direction === filter;
-      const matchesQuery =
-        !normalized ||
-        `${measure.title} ${measure.description}`
-          .toLocaleLowerCase('ru')
-          .includes(normalized);
-      return matchesDirection && matchesQuery;
-    });
-
-    if (sortBy === 'cost') return [...filtered].sort((a, b) => a.cost - b.cost);
-    return filtered;
-  }, [filter, query, sortBy]);
-
-  const handleSelect = (measure: Measure) => {
-    const result = onSelect(measure);
-    onNotice(result.message, result.ok ? 'success' : 'error');
-  };
-
+  onExample,
+}: Props) {
+  const [filter, setFilter] = useState("all");
+  const [query, setQuery] = useState("");
+  const [targets, setTargets] = useState<Record<string, string>>({});
+  const categories = [
+    ...new Set(catalog.dataset.measures.map((m) => m.category)),
+  ];
+  const measures = catalog.dataset.measures.filter(
+    (m) =>
+      (filter === "all" || m.category === filter) &&
+      `${m.id} ${m.name}`
+        .toLocaleLowerCase("ru")
+        .includes(query.toLocaleLowerCase("ru")),
+  );
   return (
     <aside className="panel catalog-panel" aria-labelledby="catalog-title">
       <div className="panel-heading catalog-heading">
         <div>
           <p className="eyebrow">Библиотека решений</p>
           <div className="heading-line">
-            <h1 id="catalog-title">14 городских мер</h1>
-            <span className="count-badge">{MEASURES.length}</span>
+            <h1 id="catalog-title">Городские меры</h1>
+            <span className="count-badge">
+              {catalog.dataset.measures.length}
+            </span>
           </div>
         </div>
-        <button
-          className="icon-button"
-          type="button"
-          title={sortBy === 'cost' ? 'Вернуть исходный порядок' : 'Сортировать по стоимости'}
-          aria-label={sortBy === 'cost' ? 'Вернуть исходный порядок' : 'Сортировать по стоимости'}
-          onClick={() => setSortBy((current) => (current === 'cost' ? 'default' : 'cost'))}
-        >
-          <ArrowDownUp size={17} aria-hidden="true" />
-        </button>
       </div>
-
       <label className="search-field">
-        <Search size={17} aria-hidden="true" />
+        <Search size={17} />
         <span className="sr-only">Поиск по мерам</span>
         <input
           value={query}
-          onChange={(event) => setQuery(event.target.value)}
+          onChange={(e) => setQuery(e.target.value)}
           placeholder="Найти меру"
         />
-        <kbd>⌘ K</kbd>
       </label>
-
-      <div className="filter-row" role="tablist" aria-label="Направления мер">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={filter === 'all'}
-          className={filter === 'all' ? 'filter-pill is-active' : 'filter-pill'}
-          onClick={() => setFilter('all')}
-        >
-          Все
-        </button>
-        {DIRECTIONS.map((direction) => (
+      <div className="filter-row" aria-label="Направления мер">
+        {["all", ...categories].map((category) => (
           <button
-            key={direction.id}
+            key={category}
             type="button"
-            role="tab"
-            aria-selected={filter === direction.id}
-            className={filter === direction.id ? 'filter-pill is-active' : 'filter-pill'}
-            onClick={() => setFilter(direction.id)}
-            title={direction.fullLabel}
+            className={`filter-pill${filter === category ? " is-active" : ""}`}
+            aria-pressed={filter === category}
+            onClick={() => setFilter(category)}
           >
-            {direction.shortLabel}
+            {category === "all" ? "Все" : category}
           </button>
         ))}
       </div>
-
       <div className="catalog-rule">
-        <Gauge size={16} aria-hidden="true" />
-        <span>Выберите по одной мере из каждого направления</span>
+        Выберите {catalog.required_decisions} мер, не более{" "}
+        {catalog.max_per_category} из одного направления.
       </div>
-
       <div className="measure-list" aria-label="Каталог мер">
-        {visibleMeasures.map((measure) => {
-          const direction = DIRECTIONS.find((item) => item.id === measure.direction)!;
-          const selected = selectedMeasures.some((item) => item.id === measure.id);
-          const sameDirection = selectedMeasures.find(
-            (item) => item.direction === measure.direction,
-          );
-          const nextSpent = spent - (sameDirection?.cost ?? 0) + measure.cost;
-          const budgetBlocked = !selected && nextSpent > BUDGET_LIMIT;
-          const slotsBlocked =
-            !selected &&
-            !sameDirection &&
-            selectedMeasures.length >= REQUIRED_DECISIONS;
-          const blocked = budgetBlocked || slotsBlocked;
-          const strongestImpact = Object.entries(measure.impact)
-            .filter(([, value]) => value !== 0)
-            .sort(([, a], [, b]) => Math.abs(b) - Math.abs(a))
-            .slice(0, 2);
-
+        {measures.map((measure) => {
+          const selected = plan.measure_ids.includes(measure.id);
+          const district = selected
+            ? (plan.district_assignments[measure.id] ?? "")
+            : (targets[measure.id] ?? "");
           return (
             <article
               key={measure.id}
-              className={`measure-card${selected ? ' is-selected' : ''}${blocked ? ' is-blocked' : ''}`}
-              style={{ '--direction-color': direction.color } as React.CSSProperties}
+              className={`measure-card${selected ? " is-selected" : ""}`}
+              style={
+                {
+                  "--direction-color":
+                    CATEGORY_COLORS[
+                      categories.indexOf(measure.category) %
+                        CATEGORY_COLORS.length
+                    ],
+                } as React.CSSProperties
+              }
             >
               <div className="measure-card__meta">
                 <span className="direction-label">
-                  <span className="direction-dot" aria-hidden="true" />
-                  {direction.label}
+                  <span className="direction-dot" />
+                  {measure.category}
                 </span>
-                {measure.badge && <span className="measure-badge">{measure.badge}</span>}
+                <span className="measure-badge">{measure.id}</span>
               </div>
               <div className="measure-card__title-row">
-                <h2>{measure.title}</h2>
+                <h2>{measure.name}</h2>
                 <span className="measure-cost">
                   {measure.cost}
                   <small>у.е.</small>
                 </span>
               </div>
-              <p>{measure.description}</p>
+              <p>
+                {measure.measure_type === "City"
+                  ? "Все районы"
+                  : "Один выбранный район"}{" "}
+                · Лаг: {measure.lag} кв.
+              </p>
+              {measure.measure_type === "District" && (
+                <label className="district-select">
+                  Район для {measure.id}
+                  <select
+                    value={district}
+                    aria-label={`Район для ${measure.id}`}
+                    onChange={(e) => {
+                      if (selected)
+                        onNotice(onAssign(measure.id, e.target.value));
+                      else
+                        setTargets((current) => ({
+                          ...current,
+                          [measure.id]: e.target.value,
+                        }));
+                    }}
+                  >
+                    <option value="">Выберите район</option>
+                    {catalog.dataset.districts.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <div className="impact-chips" aria-label="Эффекты до учёта лага">
+                {Object.entries(measure.effects).map(([metric, value]) => (
+                  <span key={metric} title={catalog.metric_labels[metric]}>
+                    {metric} {formatDelta(value)}
+                  </span>
+                ))}
+              </div>
               <div className="measure-card__footer">
-                <div className="impact-chips" aria-label="Главные ожидаемые эффекты">
-                  {strongestImpact.map(([key, value]) => {
-                    const meta = DIRECTIONS.find((item) => item.id === key);
-                    return (
-                      <span key={key} title={meta?.fullLabel}>
-                        {meta?.shortLabel} {formatDelta(value)}
-                      </span>
-                    );
-                  })}
-                </div>
+                <small>Эффекты до учёта лага</small>
                 <button
                   type="button"
                   className="measure-action"
                   aria-pressed={selected}
-                  aria-disabled={blocked}
-                  title={
-                    budgetBlocked
-                      ? `Не хватает ${nextSpent - BUDGET_LIMIT} у.е.`
-                      : slotsBlocked
-                        ? 'Все 5 слотов заняты'
-                        : undefined
-                  }
-                  onClick={() => handleSelect(measure)}
+                  onClick={() => onNotice(onSelect(measure, district))}
                 >
                   {selected ? (
                     <>
-                      <Check size={15} aria-hidden="true" /> Выбрано
-                    </>
-                  ) : budgetBlocked ? (
-                    `−${nextSpent - BUDGET_LIMIT} у.е.`
-                  ) : sameDirection ? (
-                    <>
-                      Заменить <ChevronRight size={15} aria-hidden="true" />
+                      <Check size={15} /> Убрать
                     </>
                   ) : (
-                    <>
-                      Добавить <ChevronRight size={15} aria-hidden="true" />
-                    </>
+                    "Добавить"
                   )}
                 </button>
               </div>
             </article>
           );
         })}
-        {!visibleMeasures.length && (
-          <div className="empty-search">
-            <Search size={22} aria-hidden="true" />
-            <p>По этому запросу мер не найдено.</p>
-          </div>
-        )}
+        {!measures.length && <p className="empty-search">Меры не найдены.</p>}
       </div>
-
       <button
         type="button"
         className="balanced-plan-button"
-        onClick={() => {
-          onBalancedPlan();
-          onNotice('Собран сбалансированный демо-план на 78 у.е.', 'success');
-        }}
+        onClick={() => onNotice(onExample())}
       >
-        <WandSparkles size={16} aria-hidden="true" />
-        Собрать сбалансированный план
+        <WandSparkles size={16} />
+        Загрузить план из задания
       </button>
     </aside>
   );
