@@ -87,6 +87,23 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/simulate -ContentType 
 рейтинг из регламента. Показатели и Score каждого из пяти районов находятся
 в `districts`; значения представлены JSON-числами.
 
+Полный пример ответа `POST /simulate` для этих пяти решений находится в
+[`examples/response.json`](examples/response.json). Это фактический результат
+калькулятора с текущей демонстрационной конфигурацией, не ответ LLM. Он содержит
+метрики и дельты всех пяти районов, штрафы, синергии, бюджет и описание методики.
+Соответствующий запрос: [`examples/request.json`](examples/request.json).
+
+После настройки ключей существующую LLM-прослойку можно проверить на этом файле:
+
+```powershell
+python -m examples.explain examples/response.json
+```
+
+В коде передавайте весь объект в `await router.assess(payload)`, включая
+`methodology.status`, `assumptions` и `warnings`. Статус `provisional` означает,
+что формулы пока демонстрационные и результат нельзя представлять как
+подтверждённый официальный Score.
+
 Невалидный запрос получает HTTP 422. Бизнес-ошибки содержат
 `detail.is_valid=false` и список `detail.validation_errors` с кодами,
 сообщениями и ID мер. Ошибки типов/структуры имеют стандартный формат FastAPI.
