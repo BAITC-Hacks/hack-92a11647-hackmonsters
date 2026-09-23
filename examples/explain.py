@@ -5,10 +5,13 @@ import json
 from pathlib import Path
 import sys
 
+from dotenv import load_dotenv
+
 from llm_integration import AssessmentUnavailable, LLMRouter
 
 
 async def main():
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
     if len(sys.argv) not in (2, 3, 4):
         raise SystemExit("Usage: python -m examples.explain result.json [openai|nvidia] [fallback|none]")
     data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))

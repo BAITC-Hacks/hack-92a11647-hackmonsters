@@ -1,105 +1,71 @@
-import { DIRECTIONS } from '../data';
-import { getCityScores, getDirectionDeltas } from './simulation';
-import type {
-  DistrictProjection,
-  Measure,
-  PitchSlideData,
-} from '../types';
+import type { AnalysisResponse, PitchSlideData } from "../types";
+import { formatDelta, formatNumber } from "./simulation";
 
-interface PitchInput {
-  selectedMeasures: Measure[];
-  projections: DistrictProjection[];
-  spent: number;
-}
-
+// Deterministic presentation of the validated analysis, with no second AI request.
 export function buildPitchSlides({
-  selectedMeasures,
-  projections,
-  spent,
-}: PitchInput): PitchSlideData[] {
-  const score = getCityScores(projections);
-  const baseline = [...projections].sort(
-    (a, b) => a.baselineScore - b.baselineScore,
-  )[0];
-  const directionDeltas = getDirectionDeltas(projections).sort(
-    (a, b) => b.delta - a.delta,
-  );
-  const leadingDistrict = [...projections].sort(
-    (a, b) =>
-      b.projectedScore - b.baselineScore -
-      (a.projectedScore - a.baselineScore),
-  )[0];
-
+  simulation: result,
+  assessment,
+}: AnalysisResponse): PitchSlideData[] {
   return [
     {
-      id: 'context',
-      eyebrow: '01 · Контекст',
-      title: 'Пять часов, чтобы изменить траекторию города',
-      bullets: [
-        `Стартовый городской индекс — ${score.baseline}/100.`,
-        `Самая уязвимая точка — ${baseline.district.shortName}: ${baseline.baselineScore}/100.`,
-        'Цель — сбалансировать пять направлений без превышения бюджета.',
-      ],
+      id: "plan",
+      eyebrow: "План",
+      title: "Решения для Астаны",
+      tone: "ink",
+      bullets: result.selected_measures.map(
+        (m) =>
+          `${m.id} · ${m.name} — ${m.measure_type === "City" ? "весь город" : m.target_districts.map((id) => result.districts.find((d) => d.id === id)?.name ?? id).join(", ")}`,
+      ),
       metrics: [
-        { label: 'Бюджет', value: '100 у.е.' },
-        { label: 'Районов', value: '5' },
-        { label: 'Решений', value: '5' },
+        { label: "Расходы", value: `${result.budget.spent} у.е.` },
+        { label: "Остаток", value: `${result.budget.remaining} у.е.` },
       ],
       speakerNotes:
-        'Начните с ограничения: одинаковый бюджет для всех команд и необходимость сделать осознанный выбор.',
-      tone: 'ink',
+        "Стоимость, назначения и ограничения проверены серверным калькулятором.",
     },
     {
-      id: 'plan',
-      eyebrow: '02 · План',
-      title: 'Одна связная программа вместо пяти разрозненных мер',
-      bullets: selectedMeasures.map((measure) => {
-        const direction = DIRECTIONS.find((item) => item.id === measure.direction);
-        return `${direction?.label}: ${measure.title} — ${measure.cost} у.е.`;
-      }),
+      id: "effect",
+      eyebrow: "Результат калькулятора",
+      title: "Как изменятся показатели",
+      tone: "mint",
+      bullets: [assessment.general_assessment, ...assessment.strengths],
       metrics: [
-        { label: 'Использовано', value: `${spent}/100` },
-        { label: 'Резерв', value: `${100 - spent} у.е.` },
+        { label: "Score", value: formatNumber(result.score.final) },
+        { label: "Изменение Score", value: formatDelta(result.score.delta) },
       ],
-      speakerNotes:
-        'Свяжите каждую меру с конкретным городским результатом; не читайте список как закупочную ведомость.',
-      tone: 'blue',
+      speakerNotes: `Исходный Score: ${formatNumber(result.score.base)}. Горизонт: ${result.methodology.horizon_periods} кв.`,
     },
     {
-      id: 'impact',
-      eyebrow: '03 · Эффект',
-      title: `Quality of Life Score растёт до ${score.projected}/100`,
-      bullets: [
-        `Лидер роста — ${directionDeltas[0].direction.label}: +${directionDeltas[0].delta}.`,
-        `${leadingDistrict.district.shortName} получает наибольшую суммарную дельту.`,
-        'Единая шкала 0–100 позволяет честно сравнить районы и направления.',
+      id: "risks",
+      eyebrow: "Риски и ограничения",
+      title: "Что требует внимания",
+      tone: "amber",
+      bullets: assessment.risks_and_penalties.length
+        ? assessment.risks_and_penalties
+        : ["Подтверждённые риски в анализе не указаны."],
+      metrics: [
+        {
+          label: "Штраф после мер",
+          value: formatNumber(result.score_breakdown.critical_penalty.final),
+        },
+        {
+          label: "Критические показатели",
+          value: String(result.score_breakdown.n_crit_final),
+        },
       ],
-      metrics: directionDeltas.slice(0, 3).map((item) => ({
-        label: item.direction.label,
-        value: `+${item.delta}`,
-        delta: item.delta,
-      })),
       speakerNotes:
-        'Подчеркните, что числовой preview рассчитывается структурированной моделью, а LLM только объясняет результат.',
-      tone: 'mint',
+        "Отделяйте применённые штрафы калькулятора от качественных рисков AI.",
     },
     {
-      id: 'risks',
-      eyebrow: '04 · Контроль',
-      title: 'Результат измерим — риски управляемы',
-      bullets: [
-        [...selectedMeasures].sort((a, b) => b.cost - a.cost)[0].tradeoff,
-        `Слабее всего меняется направление «${directionDeltas.at(-1)?.direction.label}» — нужен квартальный контроль.`,
-        'Публикуем baseline, фактические дельты и причины отклонений.',
-        'Решение: пилот → проверка данных → масштабирование.',
-      ],
-      metrics: [
-        { label: 'Резерв', value: `${100 - spent} у.е.` },
-        { label: 'Контроль', value: '90 дней' },
-      ],
+      id: "next",
+      eyebrow: "Следующие шаги",
+      title: "Рекомендации для нового сценария",
+      tone: "blue",
+      bullets: assessment.recommendations.length
+        ? assessment.recommendations
+        : ["Дополнительные рекомендации не указаны."],
       speakerNotes:
-        'Завершите конкретным следующим шагом: 90-дневный пилот и открытая проверка показателей.',
-      tone: 'amber',
+        "Изменённый набор мер нужно повторно проверить калькулятором; рекомендации не гарантируют числовой эффект.",
     },
   ];
 }
