@@ -1,0 +1,10 @@
+{
+  "version": "hackalem-district-dataset-v1",
+  "status": "confirmed",
+  "horizon_periods": 8,
+  "period_unit": "квартал",
+  "metric_weights": {"T1": 0.10, "T2": 0.10, "E1": 0.09, "E2": 0.11, "S1": 0.11, "S2": 0.11, "B1": 0.09, "B2": 0.09, "C1": 0.10, "C2": 0.10},
+  "critical_penalty": 1.0,
+  "city_average_weight": 0.7,
+  "weakest_district_weight": 0.3
+}

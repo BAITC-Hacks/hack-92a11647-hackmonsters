@@ -1,9 +1,8 @@
 """Deterministic city calculations and a provider-independent LLM context.
 
-The supplied dataset specifies effects, scopes, conflicts and synergies, but
-does not specify the Score formula. ScoringRules therefore has no implicit
-weights, horizon or penalty coefficient. data/rules.demo.json is explicitly
-provisional and must be replaced after the competition rules are confirmed.
+The supplied «Датасет районов.docx», section 3, defines district weights,
+the eight-quarter horizon and the city Score formula. data/rules.json contains
+those parameters. All calculations precede rounding at the JSON boundary.
 """
 
 from __future__ import annotations
@@ -163,22 +162,18 @@ class Dataset(StrictModel):
 
 
 class ScoringRules(StrictModel):
-    """Explicit parameters for the provisional linear scoring model.
+    """Parameters of the formula in «Датасет районов.docx», section 3.
 
     H = horizon_periods, L = lag in the SAME units. An effect is treated as an
     average over H periods: f(L) = max(0, (H - L) / H). Consequently L = 0 gives
     full effect and L >= H gives zero. This is not an end-of-period step model.
 
-    For district d: raw_d = sum(weights[k] * indicator[d, k]);
-    N_crit_d = count(indicator[d, k] < 40), counting individual indicators;
-    penalty_d = critical_penalty * N_crit_d;
-    D_d = clip(raw_d - penalty_d, 0, 100).
-    City Score = sum(population_share[d] * D_d). Baseline and final use the SAME
-    formula. Stored base_d is reference metadata, not substituted into it.
-
-    No assumption here is claimed to reproduce the unavailable sources [2, 3].
-    Changing the functional form requires replacing the corresponding methods,
-    while changing weights, H or penalty only requires new validated rules.
+    D_d = sum(weights[k] * indicator[d, k]); D_avg = sum(pop_d * D_d).
+    N_crit counts all district/metric pairs strictly below 40.
+    Score = city_average_weight * D_avg + weakest_district_weight * min(D_d)
+            - critical_penalty * N_crit.
+    Penalties are deducted once from the CITY Score, without population weights.
+    The final Score is not clipped. Stored base_d remains reference metadata.
     """
 
     version: NonEmptyString
@@ -187,6 +182,8 @@ class ScoringRules(StrictModel):
     period_unit: NonEmptyString
     metric_weights: dict[Metric, Annotated[FiniteNumber, Field(ge=0, le=1)]]
     critical_penalty: Annotated[FiniteNumber, Field(ge=0, le=100)]
+    city_average_weight: Annotated[FiniteNumber, Field(ge=0, le=1)]
+    weakest_district_weight: Annotated[FiniteNumber, Field(ge=0, le=1)]
 
     @model_validator(mode="after")
     def validate_weights(self) -> Self:
@@ -194,6 +191,9 @@ class ScoringRules(StrictModel):
             raise ValueError("Provide weights for all ten metrics.")
         if not isclose(fsum(self.metric_weights.values()), 1, abs_tol=1e-9, rel_tol=0):
             raise ValueError("Metric weights must sum to one.")
+        if not isclose(self.city_average_weight + self.weakest_district_weight, 1,
+                       abs_tol=1e-9, rel_tol=0):
+            raise ValueError("City and weakest-district weights must sum to one.")
         return self
 
 
@@ -232,8 +232,8 @@ class DistrictResult(StrictModel):
     population_share: FiniteNumber
     provided_base_d: Indicator | None
     score: Change
-    raw_score: Change
-    penalty: Change
+    raw_score: Change = Field(description="Same as score: district D before city penalties.")
+    penalty: Change = Field(description="This district's contribution to the CITY penalty; not deducted from D.")
     n_crit_base: int
     n_crit_final: int
     critical_metrics_base: list[Metric]
@@ -275,15 +275,26 @@ class Penalty(StrictModel):
     nominal_amount: FiniteNumber
     applied_amount: FiniteNumber
     city_score_deduction: FiniteNumber
-    reason: str = "Показатели строго ниже 40; штраф применяется к Score района."
+    reason: str = "Показатели строго ниже 40; штраф вычитается из общего Score без взвешивания по населению."
+
+
+class ScoreBreakdown(StrictModel):
+    weighted_average: Change
+    weakest_district_score: Change
+    average_component: Change
+    weakest_component: Change
+    critical_penalty: Change
+    n_crit_base: int
+    n_crit_final: int
 
 
 class SimulationResult(StrictModel):
-    schema_version: str = "1.0"
+    schema_version: str = "2.0"
     is_valid: Literal[True] = True
     validation_errors: list[ValidationIssue] = Field(default_factory=list)
     budget: Budget
     score: Change
+    score_breakdown: ScoreBreakdown
     districts: list[DistrictResult]
     selected_measures: list[SelectedMeasure]
     penalties: list[Penalty]
@@ -371,18 +382,16 @@ class CitySimulator:
             raise ValueError("Lag must be a nonnegative integer.")
         return max(0.0, 1.0 - lag / self._rules.horizon_periods)
 
-    def _district_score(self, metrics: Mapping[Metric, float]) -> tuple[float, float, list[Metric]]:
-        """Return raw score, penalized score and metrics strictly below 40.
+    def _district_score(self, metrics: Mapping[Metric, float]) -> tuple[float, list[Metric]]:
+        """Return D = sum(w_k * x_k) and metrics strictly below 40.
 
-        raw = sum(w_k * x_k); N_crit = sum(1[x_k < 40]);
-        D = max(0, min(100, raw - alpha * N_crit)).
-        A value exactly equal to 40 is NOT critical. Indicators are clipped
-        before this calculation. No intermediate values are rounded.
+        District D is never reduced by penalties. A value exactly equal to 40
+        is NOT critical. Indicators are clipped before this calculation.
+        No intermediate values are rounded.
         """
         raw = fsum(self._rules.metric_weights[metric] * metrics[metric] for metric in METRICS)
         critical = [metric for metric in METRICS if metrics[metric] < CRITICAL_THRESHOLD]
-        score = max(0.0, min(100.0, raw - self._rules.critical_penalty * len(critical)))
-        return raw, score, critical
+        return raw, critical
 
     def simulate(
         self,
@@ -402,7 +411,8 @@ class CitySimulator:
 
         Contributions expose pre-clipping indicator changes, NOT independent
         Score contributions: saturation and critical penalties are nonlinear.
-        City base/final Scores are population-weighted district Scores; both
+        City base/final Scores combine the population-weighted average and the
+        weakest district, then subtract a city-wide critical penalty. Both
         are computed from unrounded values, then rounded for JSON presentation.
         """
         request = SimulationRequest(
@@ -457,66 +467,94 @@ class CitySimulator:
         penalties: list[Penalty] = []
         weighted_base: list[float] = []
         weighted_final: list[float] = []
+        base_scores: list[float] = []
+        final_scores: list[float] = []
+        n_crit_base = n_crit_final = 0
         mismatched_baselines: list[str] = []
         for district in self._dataset.districts:
             final_metrics = {
                 metric: max(0.0, min(100.0, district.metrics[metric] + fsum(effects[district.id][metric])))
                 for metric in METRICS
             }
-            base_raw, base_score, base_critical = self._district_score(district.metrics)
-            final_raw, final_score, final_critical = self._district_score(final_metrics)
+            base_score, base_critical = self._district_score(district.metrics)
+            final_score, final_critical = self._district_score(final_metrics)
             base_penalty = self._rules.critical_penalty * len(base_critical)
             final_penalty = self._rules.critical_penalty * len(final_critical)
             results.append(DistrictResult(
                 id=district.id, name=district.name, population_share=district.population_share,
                 provided_base_d=district.base_d,
                 score=Change.between(base_score, final_score),
-                raw_score=Change.between(base_raw, final_raw),
+                raw_score=Change.between(base_score, final_score),
                 penalty=Change.between(base_penalty, final_penalty),
                 n_crit_base=len(base_critical), n_crit_final=len(final_critical),
                 critical_metrics_base=base_critical, critical_metrics_final=final_critical,
                 metrics={metric: Change.between(district.metrics[metric], final_metrics[metric]) for metric in METRICS},
             ))
-            for stage, raw, score, critical in (
-                ("base", base_raw, base_score, base_critical),
-                ("final", final_raw, final_score, final_critical),
+            for stage, critical in (
+                ("base", base_critical),
+                ("final", final_critical),
             ):
-                applied_penalty = max(0.0, raw - score)
+                applied_penalty = self._rules.critical_penalty * len(critical)
                 if critical and applied_penalty > 0:
                     penalties.append(Penalty(
                         district_id=district.id, stage=stage, n_crit=len(critical), critical_metrics=critical,
                         nominal_amount=round(self._rules.critical_penalty * len(critical), 6),
                         applied_amount=round(applied_penalty, 6),
-                        city_score_deduction=round(applied_penalty * district.population_share, 6),
+                        city_score_deduction=round(applied_penalty, 6),
                     ))
             weighted_base.append(district.population_share * base_score)
             weighted_final.append(district.population_share * final_score)
+            base_scores.append(base_score)
+            final_scores.append(final_score)
+            n_crit_base += len(base_critical)
+            n_crit_final += len(final_critical)
             if district.base_d is not None and abs(district.base_d - base_score) > 0.005:
                 mismatched_baselines.append(district.id)
 
         warnings = []
         if self._rules.status == "provisional":
-            warnings.append("Демонстрационная формула: источники [2, 3] не предоставлены; это не подтверждённый официальный Score.")
+            warnings.append("Параметры методики помечены как provisional; результат использует неподтверждённую конфигурацию.")
         if mismatched_baselines:
             warnings.append("Предоставленный base_d отличается от расчётной базы: " + ", ".join(mismatched_baselines)
                             + ". Он сохранён как provided_base_d, но не смешивается с расчётным Score.")
         spent = sum(measure.cost for measure in selected)
+        base_average, final_average = fsum(weighted_base), fsum(weighted_final)
+        base_min, final_min = min(base_scores), min(final_scores)
+        base_average_component = self._rules.city_average_weight * base_average
+        final_average_component = self._rules.city_average_weight * final_average
+        base_weakest_component = self._rules.weakest_district_weight * base_min
+        final_weakest_component = self._rules.weakest_district_weight * final_min
+        base_city_penalty = self._rules.critical_penalty * n_crit_base
+        final_city_penalty = self._rules.critical_penalty * n_crit_final
         return SimulationResult(
             budget=Budget(spent=spent, remaining=BUDGET_LIMIT - spent),
-            score=Change.between(fsum(weighted_base), fsum(weighted_final)),
+            score=Change.between(
+                base_average_component + base_weakest_component - base_city_penalty,
+                final_average_component + final_weakest_component - final_city_penalty,
+            ),
+            score_breakdown=ScoreBreakdown(
+                weighted_average=Change.between(base_average, final_average),
+                weakest_district_score=Change.between(base_min, final_min),
+                average_component=Change.between(base_average_component, final_average_component),
+                weakest_component=Change.between(base_weakest_component, final_weakest_component),
+                critical_penalty=Change.between(base_city_penalty, final_city_penalty),
+                n_crit_base=n_crit_base, n_crit_final=n_crit_final,
+            ),
             districts=results, selected_measures=selected_details, penalties=penalties,
             measure_contributions=contributions, methodology=self._rules.model_copy(deep=True),
             assumptions=[
                 "Все десять показателей направлены вверх: больше означает лучше; границы 0..100.",
-                "Лаг: f(L)=max(0,(H-L)/H); эффект усреднён за H условных периодов.",
+                f"Лаг: f(L)=max(0,(H-L)/H); H={self._rules.horizon_periods}, единица: {self._rules.period_unit}.",
                 "Синергия без lag_scaled применяется целиком; с lag_scaled — с min(f(L1),f(L2)).",
                 "Эффекты суммируются, затем показатели один раз ограничиваются диапазоном 0..100.",
-                "N_crit — число отдельных показателей строго ниже 40 в каждом районе.",
-                "D=clip(sum(w_k*x_k)-critical_penalty*N_crit,0,100); Score=sum(population_share*D).",
+                "N_crit — число пар район × показатель строго ниже 40 во всём городе.",
+                "D=sum(w_k*x_k); D_avg=sum(population_share*D).",
+                "Score=city_average_weight*D_avg+weakest_district_weight*min(D)-critical_penalty*N_crit.",
                 "measure_contributions — изменения показателей до ограничения, а не аддитивные вклады в Score.",
-                "penalty района — номинальный штраф; penalties содержит фактические вычеты с учётом нижней границы Score.",
+                "penalty района — его вклад в общий штраф города. Из D района штраф не вычитается.",
+                "Штрафы не взвешиваются по населению. Итоговый Score не ограничивается диапазоном 0..100.",
                 "Взвешивание выполнено до округления; числа JSON округлены до шести знаков.",
-                "T: транспорт; E: экология; S: соцсфера; B: безопасность; C: сервисы. Точные определения подметрик не предоставлены.",
+                "T: транспорт; E: экология; S: соцсфера; B: безопасность; C: сервисы.",
             ],
             warnings=warnings,
             llm_instructions=(

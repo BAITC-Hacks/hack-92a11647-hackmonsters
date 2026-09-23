@@ -25,14 +25,14 @@ def create_app(simulator: CitySimulator | None = None) -> FastAPI:
     if simulator is None:
         data_directory = Path(__file__).resolve().parent / "data"
         dataset = Dataset.from_json(os.environ.get("CITY_DATA_PATH", str(data_directory / "city.json")))
-        rules_path = Path(os.environ.get("CITY_RULES_PATH", str(data_directory / "rules.demo.json")))
+        rules_path = Path(os.environ.get("CITY_RULES_PATH", str(data_directory / "rules.json")))
         rules = ScoringRules.model_validate_json(rules_path.read_text(encoding="utf-8"))
         simulator = CitySimulator(dataset, rules)
 
     app = FastAPI(
         title="Аким на 5 часов — City Simulator",
-        version="1.0.0",
-        description="Детерминированный расчёт и контекст для LLM. По умолчанию используется демонстрационная методика.",
+        version="2.0.0",
+        description="Детерминированный расчёт по формуле из Датасета районов и контекст для LLM.",
     )
 
     @app.post("/simulate", response_model=SimulationResult)
