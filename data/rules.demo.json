@@ -1,0 +1,8 @@
+{
+  "version": "demo-linear-v1",
+  "status": "provisional",
+  "horizon_periods": 8,
+  "period_unit": "условный период (единица в исходных данных не указана)",
+  "metric_weights": {"T1": 0.1, "T2": 0.1, "E1": 0.1, "E2": 0.1, "S1": 0.1, "S2": 0.1, "B1": 0.1, "B2": 0.1, "C1": 0.1, "C2": 0.1},
+  "critical_penalty": 2.0
+}
