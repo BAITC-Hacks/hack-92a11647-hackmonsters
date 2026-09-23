@@ -2401,6 +2401,67 @@ h3 {
   }
 }
 
+.agent-panel {
+  padding: 20px;
+  min-width: 0;
+}
+
+.agent-panel h2,
+.agent-actions,
+.agent-metrics {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.agent-panel p,
+.agent-panel li {
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.agent-panel ul,
+.agent-panel ol {
+  padding-left: 20px;
+}
+
+.agent-objective {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  margin: 14px 0;
+}
+
+.agent-objective select {
+  padding: 9px;
+  width: 100%;
+  border: 1px solid #ced8d0;
+  border-radius: 8px;
+  background: #fff;
+  color: #163f34;
+}
+
+.agent-proposal {
+  margin-top: 16px;
+  border-top: 1px solid #ced8d0;
+  padding-top: 16px;
+}
+
+.agent-metrics > span {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border-radius: 8px;
+  background: #edf8f1;
+  font-size: 11px;
+}
+
+.agent-panel details {
+  margin: 12px 0;
+  font-size: 12px;
+}
+
 .district-selector {
   display: flex;
   gap: 8px;

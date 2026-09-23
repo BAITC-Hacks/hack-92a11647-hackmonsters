@@ -89,6 +89,27 @@ export interface AnalysisResponse {
   provider_used: string;
 }
 
+export type AgentObjective = 'city_score' | 'weakest_district' | 'critical_metrics';
+
+export interface AgentResult {
+  objective: AgentObjective;
+  provider_used: string;
+  proposed_plan: SimulationRequest;
+  simulation: SimulationResult;
+  comparison: {
+    reference: 'current_plan' | 'baseline';
+    score: Change;
+    weakest_district: Change;
+    critical_metrics: Change;
+  };
+  model_calls: number;
+  evaluated_plans: number;
+  valid_plans: number;
+  steps: { provider: string; tool: string; status: 'ok' | 'rejected' | 'failed' }[];
+  warnings: string[];
+  requires_confirmation: true;
+}
+
 export interface PitchSlideData {
   id: string;
   eyebrow: string;

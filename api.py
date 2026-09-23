@@ -1,5 +1,6 @@
 """Same-origin UI/API transport; the server owns calculations and credentials."""
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -14,6 +15,7 @@ from city_simulator import (
     SimulationResult, SimulationValidationError, StrictModel,
 )
 from llm_integration import Assessment, AssessmentUnavailable, LLMRouter
+from city_agent import AgentRequest, AgentResult, AgentUnavailable, CityPlanningAgent
 
 
 ROOT = Path(__file__).resolve().parent
@@ -66,6 +68,7 @@ def create_app(simulator: CitySimulator | None = None, *,
         description="Серверный расчёт и проверенный контекст для OpenAI / NVIDIA.",
     )
     app.state.router = router
+    app.state.agent_slots = asyncio.Semaphore(2)
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -120,6 +123,31 @@ def create_app(simulator: CitySimulator | None = None, *,
             }) from error
         return AnalysisResponse(simulation=result, assessment=Assessment.model_validate(assessment),
                                 provider_used=provider_used)
+
+    @app.post("/api/agent/plan", response_model=AgentResult)
+    async def plan_with_agent(request: AgentRequest) -> AgentResult:
+        if request.current_plan is not None:
+            simulate(request.current_plan)
+        active_router = app.state.router
+        providers = {
+            name: provider for name, provider in (active_router.providers.items() if active_router else [])
+            if callable(getattr(provider, "next_tool", None))
+        }
+        if not providers or (request.provider != "auto" and request.provider not in providers):
+            raise HTTPException(503, detail={
+                "code": "agent_not_configured",
+                "message": "Для агента нужен настроенный провайдер с поддержкой вызова инструментов. Калькулятор доступен отдельно.",
+            })
+        if app.state.agent_slots.locked():
+            raise HTTPException(429, detail={"code": "agent_busy", "message": "Агент занят. Повторите немного позже."})
+        async with app.state.agent_slots:
+            try:
+                return await CityPlanningAgent(simulator, providers).run(request)
+            except AgentUnavailable as error:
+                raise HTTPException(502, detail={
+                    "code": "agent_unavailable",
+                    "message": "Агент не завершил проверенный план в пределах лимита. Ваш план не изменён; попробуйте позже.",
+                }) from error
 
     if (ROOT / "dist/index.html").is_file():
         app.mount("/", StaticFiles(directory=ROOT / "dist", html=True), name="ui")

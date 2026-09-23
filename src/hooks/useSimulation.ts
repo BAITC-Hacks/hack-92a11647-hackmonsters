@@ -82,6 +82,9 @@ export function useSimulation() {
       ...current, district_assignments: { ...current.district_assignments, [id]: district },
     })),
     reset: () => setPlan({ measure_ids: [], district_assignments: {} }),
+    applyPlan: (proposal: SimulationRequest) => setPlan({
+      measure_ids: [...proposal.measure_ids], district_assignments: { ...proposal.district_assignments },
+    }),
     applyExample: () => setPlan({ measure_ids: [...examplePlan.measure_ids], district_assignments: { ...examplePlan.district_assignments } }),
   };
 }

@@ -1,0 +1,13 @@
+{
+  "objective": "city_score",
+  "provider": "auto",
+  "current_plan": {
+    "measure_ids": ["M7", "M8", "M10", "M12", "M5"],
+    "district_assignments": {
+      "M7": "nura",
+      "M8": "nura",
+      "M10": "nura",
+      "M5": "saryarka"
+    }
+  }
+}

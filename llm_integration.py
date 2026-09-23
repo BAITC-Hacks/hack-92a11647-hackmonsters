@@ -166,6 +166,13 @@ class Provider(Protocol):
     async def aclose(self) -> None: ...
 
 
+@dataclass(frozen=True)
+class ToolCall:
+    call_id: str
+    name: str
+    arguments: str
+
+
 class OpenAICompatibleProvider:
     """OpenAI or NVIDIA NIM; output capability is configured, never guessed."""
 
@@ -210,6 +217,44 @@ class OpenAICompatibleProvider:
 
     async def aclose(self) -> None:
         await self.client.close()
+
+    async def next_tool(self, messages: list[dict[str, Any]],
+                        tools: list[dict[str, Any]]) -> ToolCall:
+        """Request one tool call; execution remains entirely in our application.
+
+        OpenAI uses strict closed schemas. For other configured output modes,
+        omit the optional strict flag for NIM compatibility; local argument and
+        business validation remain mandatory. The model must support tool calls.
+        """
+        definitions = [
+            {**tool, "function": {key: value for key, value in tool["function"].items()
+                                 if key != "strict" or self.output_mode == "json_schema"}}
+            for tool in tools
+        ]
+        response = await self.client.chat.completions.create(
+            model=self.model, messages=messages, tools=definitions,
+            tool_choice="required", parallel_tool_calls=False,
+            temperature=0, max_tokens=self.max_tokens, stream=False,
+        )
+        if not response.choices:
+            raise InvalidModelOutput("Empty agent response")
+        choice = response.choices[0]
+        message = getattr(choice, "message", None)
+        calls = getattr(message, "tool_calls", None)
+        if (choice.finish_reason != "tool_calls" or getattr(message, "refusal", None)
+                or not isinstance(calls, list) or len(calls) != 1):
+            raise InvalidModelOutput("Expected exactly one complete tool call")
+        call = calls[0]
+        function = getattr(call, "function", None)
+        call_id = getattr(call, "id", None)
+        name = getattr(function, "name", None)
+        arguments = getattr(function, "arguments", None)
+        if (getattr(call, "type", None) != "function"
+                or not isinstance(call_id, str) or not 1 <= len(call_id) <= 256
+                or not isinstance(name, str) or not 1 <= len(name) <= 64
+                or not isinstance(arguments, str)):
+            raise InvalidModelOutput("Unsupported tool call")
+        return ToolCall(call_id, name, arguments)
 
 
 class LLMRouter:
