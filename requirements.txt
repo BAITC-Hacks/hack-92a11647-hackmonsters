@@ -1,0 +1,2 @@
+openai>=1.54,<3
+pydantic>=2.9,<3
