@@ -73,7 +73,7 @@ export function PitchCarousel({ open, slides, onClose }: PitchCarouselProps) {
       >
         <div className="pitch-dialog__header">
           <div>
-            <p className="eyebrow">AI pitch deck</p>
+            <p className="eyebrow">Слайды серверного расчёта</p>
             <h2 id="pitch-dialog-title">Защита решения команды</h2>
           </div>
           <div className="pitch-dialog__actions">

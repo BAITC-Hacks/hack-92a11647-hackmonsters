@@ -276,6 +276,19 @@ class LLMRouter:
         One attempt per provider; validation failures also trigger fallback.
         asyncio cancellation propagates without starting another request.
         """
+        result, _ = await self.assess_with_provider(
+            calculator_result, provider=provider, fallback=fallback,
+        )
+        return result
+
+    async def assess_with_provider(self, calculator_result: dict[str, Any], *,
+                                   provider: str = "openai", fallback: str | None = None
+                                   ) -> tuple[dict[str, Any], str]:
+        """Return assessment and actual provider without shared request state.
+
+        Metadata travels with each response, so concurrent fallback requests
+        cannot misattribute the model that produced another user's assessment.
+        """
         names = list(dict.fromkeys(n for n in (provider, fallback) if n is not None))
         for name in names:
             if name not in self.providers:
@@ -293,7 +306,7 @@ class LLMRouter:
                 async with asyncio.timeout(min(self.attempt_timeout, remaining)):
                     raw = await self.providers[name].generate(payload)
                     result = _parse_and_render(raw, values)
-                return result.model_dump()
+                return result.model_dump(), name
             except TimeoutError:
                 reason = "timeout"
             except APIError as exc:
